@@ -1,0 +1,8 @@
+name = "phishshield-api"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+# API keys are set as secrets, not here.
+# Use: wrangler secret put GOOGLE_SAFE_BROWSING_KEY
+# Use: wrangler secret put PHISHTANK_API_KEY
