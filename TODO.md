@@ -12,6 +12,12 @@
 
 ## Backlog
 
+- [ ] **Canvas-based app support (Google Docs, Figma, Notion)**
+  - These apps don't use standard `<a href>` tags so hover tooltips don't work
+  - Option: intercept navigation via `chrome.webNavigation` and warn *after* click instead of before
+  - Option: monitor `chrome.tabs.onUpdated` and run full URL analysis on every new page load
+  - At minimum: show a warning banner if user lands on a flagged domain
+
 - [ ] Set up Google Safe Browsing API key + deploy Cloudflare Worker
 - [ ] Set up PhishTank API key
 - [ ] Test on real phishing URLs from PhishTank feed
