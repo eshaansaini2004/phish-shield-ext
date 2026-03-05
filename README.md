@@ -8,9 +8,9 @@ Hover over any link — you get an instant green, yellow, or red badge. No setti
 
 ## What it does
 
-**Three layers of analysis run every time you hover a link:**
+**Four layers of analysis run every time you hover a link:**
 
-### Layer 1 — URL Analysis (instant, no internet needed)
+### Layer 1 — URL Heuristics (instant, no internet needed)
 Checks the URL itself before anything loads:
 - IP-based URLs (`http://192.168.1.1/login`)
 - Brand impersonation in subdomains (`paypal.com.evil.com`)
@@ -23,7 +23,12 @@ Checks the URL itself before anything loads:
 - Redirect chains (`?url=`, `?goto=`)
 - And more (14 checks total)
 
-### Layer 2 — Page Analysis (runs after the page loads)
+### Layer 2 — ML Classifier (instant, no internet needed)
+A neural network (MLP: 18 inputs → 32 → 16 → 1) runs entirely in the browser — no server round-trip. It extracts 18 URL features (entropy, subdomain depth, digit density, TLD risk, etc.) and returns a phishing probability score. That score is blended with the heuristic score (45% heuristic + 55% ML) so the two layers reinforce each other. If the ML confidence hits 60%+, it adds an explicit flag in the popup.
+
+The model is trained with scikit-learn and exported to a compact JSON weight file (~24 KB). To retrain: `cd train_model && python train.py`.
+
+### Layer 3 — Page Analysis (runs after the page loads)
 Inspects the page you're on for phishing indicators:
 - Password fields on HTTP pages
 - Forms that submit to a different domain
@@ -33,7 +38,7 @@ Inspects the page you're on for phishing indicators:
 - Right-click disabled (common on phishing pages)
 - Meta refresh redirects
 
-### Layer 3 — Download Interception
+### Layer 4 — Download Interception
 Catches dangerous downloads before they run:
 - High-risk file types (`.exe`, `.bat`, `.ps1`, `.vbs`, etc.)
 - MIME type mismatch (file claims to be a PDF, is actually an .exe)
@@ -99,8 +104,9 @@ For full setup including API keys: see [SETUP.md](./SETUP.md)
 src/
   analysis/
     urlAnalysis.js       # Layer 1 — 14 URL heuristic checks
-    domAnalysis.js       # Layer 2 — 10 DOM/page checks
-    downloadAnalysis.js  # Layer 3 — 7 download checks
+    mlAnalysis.js        # Layer 2 — in-browser MLP inference (18 features)
+    domAnalysis.js       # Layer 3 — 10 DOM/page checks
+    downloadAnalysis.js  # Layer 4 — 7 download checks
   background/
     background.js        # Service worker, orchestrates all layers
     api.js               # Cloudflare Worker API client
@@ -112,8 +118,14 @@ src/
     ScoreBar.jsx         # Risk score 0–100 bar
     FlagList.jsx         # Plain-English list of what was flagged
     HelpSection.jsx      # Collapsible explainer for non-technical users
+public/
+  model/
+    weights.json         # Trained MLP weights + scaler params (~24 KB)
 cloudflare-worker/
   worker.js              # Backend proxy for threat intelligence APIs
+train_model/
+  train.py               # scikit-learn training script → exports weights.json
+  requirements.txt       # pip deps (scikit-learn, pandas, numpy, requests)
 ```
 
 ---
@@ -122,6 +134,7 @@ cloudflare-worker/
 
 - Chrome Extension Manifest V3
 - React + Vite (popup UI)
+- scikit-learn MLP → weights exported to JSON, forward pass in pure JS (no inference library needed)
 - Cloudflare Workers (serverless backend, free tier)
 - Google Safe Browsing API v4
 - PhishTank API
