@@ -4,6 +4,10 @@
 import { analyzeURL } from '../analysis/urlAnalysis.js';
 import { setupDownloadListener } from '../analysis/downloadAnalysis.js';
 import { fetchThreatAnalysis } from './api.js';
+import { loadMLModel, predictPhishing } from '../analysis/mlAnalysis.js';
+
+// Load ML model on service worker startup
+loadMLModel();
 
 // Badge color thresholds
 function setBadge(tabId, score) {
@@ -42,8 +46,22 @@ async function handleAnalyzeURL(url, sender) {
   const tabId = sender.tab?.id;
   if (!tabId) return;
 
-  // Step 1: fast local URL analysis
+  // Step 1: fast local URL analysis + ML score
   const urlResult = analyzeURL(url);
+  const mlScore = predictPhishing(url);
+
+  if (mlScore !== null) {
+    // Blend: 45% heuristic, 55% ML
+    urlResult.score = Math.min(100, Math.round(urlResult.score * 0.45 + mlScore * 0.55));
+    urlResult.mlScore = mlScore;
+    if (mlScore >= 60) {
+      urlResult.flags.push({
+        name: 'ml_classifier',
+        severity: mlScore >= 80 ? 'high' : 'medium',
+        message: `Machine learning classifier flagged this URL as likely phishing (${mlScore}% confidence).`,
+      });
+    }
+  }
 
   // Send preliminary result immediately
   chrome.tabs.sendMessage(tabId, {
