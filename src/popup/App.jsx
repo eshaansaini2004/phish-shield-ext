@@ -25,8 +25,13 @@ export default function App() {
       chrome.storage.local.get(url, (data) => {
         if (data[url]) {
           setResult(data[url]);
+          setLoading(false);
+          return;
         }
-        setLoading(false);
+
+        // No cached result — trigger analysis now (popup opened on already-loaded page)
+        chrome.runtime.sendMessage({ type: 'ANALYZE_URL', url, tabId: tabs[0].id });
+        // keep loading=true; storage.onChanged listener below will pick up the result
       });
 
       // listen for updates in case analysis finishes while popup is open
