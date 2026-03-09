@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 import numpy as np
 import pandas as pd
 import requests
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
@@ -28,10 +28,11 @@ SUSPICIOUS_TLDS = {'.xyz', '.top', '.club', '.work', '.gq', '.cf', '.tk', '.ml',
 SUSPICIOUS_KW = ['login', 'secure', 'account', 'update', 'verify', 'banking', 'confirm', 'password', 'signin', 'webscr']
 SHORTENERS = {'bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'ow.ly', 'buff.ly'}
 
-DATASET_URLS = [
-    'https://raw.githubusercontent.com/pirocheto/phishing-url-detection/main/data/selected_data.csv',
-    'https://raw.githubusercontent.com/GregaVrbancic/Phishing-Dataset/master/dataset_small.csv',
-]
+DATASET_URLS = {
+    'pirocheto': 'https://raw.githubusercontent.com/pirocheto/phishing-url-detection/main/data/selected_data.csv',
+    'GregaVrbancic_small': 'https://raw.githubusercontent.com/GregaVrbancic/Phishing-Dataset/master/dataset_small.csv',
+    'GregaVrbancic_full': 'https://raw.githubusercontent.com/GregaVrbancic/Phishing-Dataset/master/dataset_full.csv',
+}
 
 
 def url_entropy(s):
@@ -99,6 +100,7 @@ def generate_synthetic_dataset(n=12000):
     bad_tlds = list(SUSPICIOUS_TLDS)
     phish_brands = ['paypal', 'apple', 'microsoft', 'amazon', 'google', 'facebook',
                     'netflix', 'instagram', 'linkedin', 'chase', 'wellsfargo', 'bankofamerica']
+    legit_brands = ['paypal', 'amazon', 'google', 'apple', 'microsoft', 'netflix', 'facebook', 'instagram']
     phish_domains = ['secure-login', 'account-verify', 'update-info', 'signin-confirm',
                      'banking-secure', 'password-reset', 'verify-account', 'support-team']
 
@@ -116,7 +118,7 @@ def generate_synthetic_dataset(n=12000):
 
     # Phishing
     for _ in range(half):
-        style = random.randint(0, 5)
+        style = random.randint(0, 7)
         if style == 0:
             # IP-based
             ip = '.'.join(str(random.randint(1, 254)) for _ in range(4))
@@ -145,11 +147,21 @@ def generate_synthetic_dataset(n=12000):
             brand = random.choice(phish_brands)
             ip = '.'.join(str(random.randint(1, 254)) for _ in range(4))
             url = f"http://{brand}.com@{ip}/phishing/page"
-        else:
+        elif style == 5:
             # URL shortener style
             shortener = random.choice(list(SHORTENERS))
             junk = ''.join(random.choices('abcdefghijklmnop', k=6))
             url = f"http://{shortener}/{junk}"
+        elif style == 6:
+            # Punycode / IDN homograph (e.g. xn--pypal-4ve.com)
+            brand = random.choice(legit_brands)
+            # Simulate a punycoded lookalike by mangling one char position
+            junk = ''.join(random.choices('abcdefghijklmnop0123456789', k=random.randint(2, 5)))
+            url = f"http://xn--{brand}-{junk}.com/signin"
+        else:
+            # Credential harvest: legitimate brand name buried in attacker-controlled domain
+            brand = random.choice(legit_brands)
+            url = "http://secure-login." + brand + ".account-verify.net/credentials"
         rows.append({'url': url, 'label': 1})
 
     random.shuffle(rows)
@@ -157,9 +169,27 @@ def generate_synthetic_dataset(n=12000):
 
 
 def load_dataset():
-    for url in DATASET_URLS:
+    # Check for locally downloaded Kaggle PhiUSIIL dataset first.
+    # To use it: download from https://www.kaggle.com/datasets/shashwatwork/web-page-phishing-detection-dataset
+    # and place the CSV at train_model/phishing_dataset.csv
+    # Expected columns: 'url' (raw URL string) and 'phishing' (1=phishing, 0=legit)
+    local_kaggle_path = os.path.join(SCRIPT_DIR, 'phishing_dataset.csv')
+    if os.path.exists(local_kaggle_path):
         try:
-            print(f'Downloading: {url}')
+            print(f'Loading local Kaggle PhiUSIIL dataset: {local_kaggle_path}')
+            df = pd.read_csv(local_kaggle_path)
+            df.columns = [c.strip().lower() for c in df.columns]
+            if 'url' in df.columns and 'phishing' in df.columns:
+                print(f'Loaded {len(df)} rows from local Kaggle dataset.')
+                return df
+            else:
+                print(f'Local Kaggle dataset missing expected columns (url, phishing), skipping.')
+        except Exception as e:
+            print(f'Failed to load local Kaggle dataset ({e}), falling through.')
+
+    for name, url in DATASET_URLS.items():
+        try:
+            print(f'Downloading [{name}]: {url}')
             r = requests.get(url, timeout=30)
             r.raise_for_status()
             df = pd.read_csv(StringIO(r.text))
@@ -197,6 +227,10 @@ def main():
     phishing_values = {'phishing', '1', 'malicious', 'bad', 'yes'}
     y = df[label_col].astype(str).str.strip().str.lower().isin(phishing_values).astype(int).values
 
+    legit_count = int((y == 0).sum())
+    phish_count = int((y == 1).sum())
+    print(f'Dataset balance: {legit_count} legit / {phish_count} phishing ({len(y)} total)')
+
     print('Extracting features...')
     X = np.array([extract_features(str(u)) for u in df[url_col]], dtype=np.float32)
 
@@ -226,6 +260,27 @@ def main():
     acc = accuracy_score(y_test, y_pred)
     print(f'\nTest accuracy: {acc:.4f}')
     print(classification_report(y_test, y_pred, target_names=['legitimate', 'phishing']))
+
+    cm = confusion_matrix(y_test, y_pred)
+    print('Confusion matrix (rows=actual, cols=predicted):')
+    print(f'  [legit ]  TN={cm[0][0]:>5}  FP={cm[0][1]:>5}')
+    print(f'  [phish ]  FN={cm[1][0]:>5}  TP={cm[1][1]:>5}')
+
+    # Feature importances: column norms of first-layer weight matrix
+    FEATURE_NAMES = [
+        'url_length', 'hostname_length', 'subdomain_count', 'hyphen_count',
+        'is_ip', 'is_https', 'subdomains_depth', 'suspicious_tld',
+        'has_at', 'entropy', 'path_length', 'digit_count',
+        'suspicious_kw', 'slash_count', 'percent_encoded', 'is_shortener',
+        'query_params', 'double_ext',
+    ]
+    W0 = np.array(clf.coefs_[0])  # shape: (18, 32)
+    importances = np.linalg.norm(W0, axis=1)
+    ranked = sorted(zip(FEATURE_NAMES, importances), key=lambda x: x[1], reverse=True)
+    print('\nFeature importances (first-layer column norms, descending):')
+    for feat, score in ranked:
+        bar = '#' * int(score * 10)
+        print(f'  {feat:<20} {score:.4f}  {bar}')
 
     # Export: layer weights + scaler params
     layers = [
