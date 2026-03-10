@@ -9,6 +9,23 @@ import { loadMLModel, predictPhishing } from '../analysis/mlAnalysis.js';
 // Load ML model on service worker startup
 loadMLModel();
 
+const SETTINGS_KEY = 'phishshield_settings';
+const DEFAULT_SETTINGS = {
+  disableUrlAnalysis: false,
+  disableML: false,
+  disableDom: false,
+  disableDownload: false,
+  whitelist: [],
+};
+
+async function getSettings() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(SETTINGS_KEY, (data) => {
+      resolve({ ...DEFAULT_SETTINGS, ...(data[SETTINGS_KEY] || {}) });
+    });
+  });
+}
+
 // Badge color thresholds
 function setBadge(tabId, score) {
   const text = String(score);
@@ -42,14 +59,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Race: DOM often arrives before handleAnalyzeURL finishes (async API call).
     // If no main result yet, stash under dom_pending: so handleAnalyzeURL picks it up.
     const { url, result: domResult } = msg;
-    const domPendingKey = `dom_pending:${url}`;
-    chrome.storage.local.get(url, (data) => {
-      const existing = data[url];
-      if (!existing) {
-        chrome.storage.local.set({ [domPendingKey]: domResult });
-        return;
-      }
-      chrome.storage.local.set({ [url]: applyDomResult(existing, domResult) });
+    getSettings().then((settings) => {
+      if (settings.disableDom) return;
+      const domPendingKey = `dom_pending:${url}`;
+      chrome.storage.local.get(url, (data) => {
+        const existing = data[url];
+        if (!existing) {
+          chrome.storage.local.set({ [domPendingKey]: domResult });
+          return;
+        }
+        chrome.storage.local.set({ [url]: applyDomResult(existing, domResult) });
+      });
     });
   }
 
@@ -65,20 +85,38 @@ async function handleAnalyzeURL(url, sender, fallbackTabId) {
   const tabId = sender.tab?.id ?? fallbackTabId;
   if (!tabId) return;
 
-  // Step 1: fast local URL analysis + ML score
-  const urlResult = analyzeURL(url);
-  const mlScore = predictPhishing(url);
+  const settings = await getSettings();
 
-  if (mlScore !== null) {
-    // Blend: 45% heuristic, 55% ML
-    urlResult.score = Math.min(100, Math.round(urlResult.score * 0.45 + mlScore * 0.55));
-    urlResult.mlScore = mlScore;
-    if (mlScore >= 60) {
-      urlResult.flags.push({
-        name: 'ml_classifier',
-        severity: mlScore >= 80 ? 'high' : 'medium',
-        message: `Machine learning classifier flagged this URL as likely phishing (${mlScore}% confidence).`,
-      });
+  // Whitelist check: return safe immediately if domain is trusted
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    if ((settings.whitelist || []).some((d) => hostname === d || hostname.endsWith(`.${d}`))) {
+      const safeResult = { score: 0, flags: [], whitelisted: true };
+      chrome.storage.local.set({ [url]: safeResult });
+      setBadge(tabId, 0);
+      chrome.tabs.sendMessage(tabId, { type: 'ANALYSIS_COMPLETE', url, result: safeResult }).catch(() => {});
+      return;
+    }
+  } catch (_) { /* invalid URL, fall through */ }
+
+  // Step 1: fast local URL analysis + ML score
+  const urlResult = settings.disableUrlAnalysis
+    ? { score: 0, flags: [] }
+    : analyzeURL(url);
+
+  if (!settings.disableML) {
+    const mlScore = predictPhishing(url);
+    if (mlScore !== null) {
+      // Blend: 45% heuristic, 55% ML
+      urlResult.score = Math.min(100, Math.round(urlResult.score * 0.45 + mlScore * 0.55));
+      urlResult.mlScore = mlScore;
+      if (mlScore >= 60) {
+        urlResult.flags.push({
+          name: 'ml_classifier',
+          severity: mlScore >= 80 ? 'high' : 'medium',
+          message: `Machine learning classifier flagged this URL as likely phishing (${mlScore}% confidence).`,
+        });
+      }
     }
   }
 
@@ -128,12 +166,14 @@ async function handleAnalyzeURL(url, sender, fallbackTabId) {
   }
 
   // Check if DOM analysis already arrived while we were awaiting the API call
-  const domPendingKey = `dom_pending:${url}`;
-  const stored = await chrome.storage.local.get(domPendingKey);
-  const pendingDom = stored[domPendingKey];
-  if (pendingDom) {
-    Object.assign(merged, applyDomResult(merged, pendingDom));
-    chrome.storage.local.remove(domPendingKey);
+  if (!settings.disableDom) {
+    const domPendingKey = `dom_pending:${url}`;
+    const stored = await chrome.storage.local.get(domPendingKey);
+    const pendingDom = stored[domPendingKey];
+    if (pendingDom) {
+      Object.assign(merged, applyDomResult(merged, pendingDom));
+      chrome.storage.local.remove(domPendingKey);
+    }
   }
 
   // Store final result
@@ -150,7 +190,9 @@ async function handleAnalyzeURL(url, sender, fallbackTabId) {
 }
 
 // Download listener: warn on dangerous files
-setupDownloadListener((downloadId, result) => {
+setupDownloadListener(async (downloadId, result) => {
+  const settings = await getSettings();
+  if (settings.disableDownload) return;
   if (result.shouldBlock) {
     chrome.notifications.create(`dl-warn-${downloadId}`, {
       type: 'basic',
@@ -181,19 +223,34 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
   // Skip browser-internal URLs
   if (url.startsWith('chrome://') || url.startsWith('chrome-extension://') || url.startsWith('about:')) return;
 
-  // Run the same analysis pipeline used for hover
-  const urlResult = analyzeURL(url);
-  const mlScore = predictPhishing(url);
+  const settings = await getSettings();
 
-  if (mlScore !== null) {
-    urlResult.score = Math.min(100, Math.round(urlResult.score * 0.45 + mlScore * 0.55));
-    urlResult.mlScore = mlScore;
-    if (mlScore >= 60) {
-      urlResult.flags.push({
-        name: 'ml_classifier',
-        severity: mlScore >= 80 ? 'high' : 'medium',
-        message: `Machine learning classifier flagged this URL as likely phishing (${mlScore}% confidence).`,
-      });
+  // Whitelist check
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    if ((settings.whitelist || []).some((d) => hostname === d || hostname.endsWith(`.${d}`))) {
+      const safeResult = { score: 0, flags: [], whitelisted: true };
+      chrome.storage.local.set({ [url]: safeResult });
+      setBadge(tabId, 0);
+      return;
+    }
+  } catch (_) { /* invalid URL, fall through */ }
+
+  // Run the same analysis pipeline used for hover
+  const urlResult = settings.disableUrlAnalysis ? { score: 0, flags: [] } : analyzeURL(url);
+
+  if (!settings.disableML) {
+    const mlScore = predictPhishing(url);
+    if (mlScore !== null) {
+      urlResult.score = Math.min(100, Math.round(urlResult.score * 0.45 + mlScore * 0.55));
+      urlResult.mlScore = mlScore;
+      if (mlScore >= 60) {
+        urlResult.flags.push({
+          name: 'ml_classifier',
+          severity: mlScore >= 80 ? 'high' : 'medium',
+          message: `Machine learning classifier flagged this URL as likely phishing (${mlScore}% confidence).`,
+        });
+      }
     }
   }
 
@@ -219,12 +276,14 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
   }
 
   // Check if DOM analysis already arrived while we were awaiting the API call
-  const domPendingKeyNav = `dom_pending:${url}`;
-  const storedNav = await chrome.storage.local.get(domPendingKeyNav);
-  const pendingDomNav = storedNav[domPendingKeyNav];
-  if (pendingDomNav) {
-    Object.assign(merged, applyDomResult(merged, pendingDomNav));
-    chrome.storage.local.remove(domPendingKeyNav);
+  if (!settings.disableDom) {
+    const domPendingKeyNav = `dom_pending:${url}`;
+    const storedNav = await chrome.storage.local.get(domPendingKeyNav);
+    const pendingDomNav = storedNav[domPendingKeyNav];
+    if (pendingDomNav) {
+      Object.assign(merged, applyDomResult(merged, pendingDomNav));
+      chrome.storage.local.remove(domPendingKeyNav);
+    }
   }
 
   // Store result so the popup can display it
