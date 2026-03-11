@@ -2,7 +2,7 @@
 
 A Chrome extension that analyzes links in real time and warns you before you click something malicious. Built for everyone, but especially for people who didn't grow up with the internet.
 
-Hover over any link — you get an instant green, yellow, or red badge. No settings to configure, no accounts to create.
+Hover over any link — you get an instant green, yellow, or red badge. Fully configurable via the settings page if you want to tune which layers run or whitelist trusted domains.
 
 ---
 
@@ -54,6 +54,17 @@ When configured, the extension also checks against:
 
 See [SETUP.md](./SETUP.md) for how to enable these.
 
+### Settings Page
+Right-click the extension icon → **Options** to:
+- Toggle any analysis layer on or off (URL heuristics, ML, DOM, Download)
+- Add domains to a whitelist — whitelisted sites bypass all checks and return safe instantly
+- Settings sync across your Chrome profile via `chrome.storage.sync`
+
+### Report as Phishing
+In the popup, a small **⚑ Report** button appears after analysis. Clicking it:
+- Opens PhishTank's submission page in a new tab so you can report it to the community
+- Logs the report locally (`phishshield_reports` in chrome.storage) for your own records
+
 ---
 
 ## What it looks like
@@ -71,11 +82,11 @@ Click the extension icon in your toolbar to see the full breakdown: risk score, 
 ## Known limitations
 
 ### Google Docs, Figma, and similar apps
-These apps don't use standard HTML `<a href>` links. They render everything on a canvas layer with custom click handlers, so the extension can't hook into individual links. The extension still runs page-level analysis (Layer 2) but hover tooltips won't appear.
+These apps don't use standard HTML `<a href>` links. They render everything on a canvas layer with custom click handlers, so the extension can't hook into individual links. Hover tooltips won't appear inside them.
 
-Affected: Google Docs, Google Sheets, Google Slides, Figma, Notion (partial), and other canvas-based web apps.
+However, the extension now detects every top-level navigation via `webNavigation.onCommitted` — so if navigating *to* a dangerous URL through one of these apps, you'll still get a notification banner if the score hits 70+.
 
-Workaround tracked in [TODO.md](./TODO.md).
+Affected for tooltips only: Google Docs, Sheets, Slides, Figma, Notion (partial).
 
 ### iframes
 Content inside cross-origin iframes (like embedded ads) isn't accessible to the content script due to browser security policies. Links inside those iframes won't get tooltips.
@@ -113,11 +124,14 @@ src/
   content/
     content.js           # Hover tooltips, page analysis trigger
   popup/
-    App.jsx              # Main popup UI
+    App.jsx              # Main popup UI (includes report button)
     RiskBadge.jsx        # Big green/yellow/red status badge
     ScoreBar.jsx         # Risk score 0–100 bar
     FlagList.jsx         # Plain-English list of what was flagged
     HelpSection.jsx      # Collapsible explainer for non-technical users
+  options/
+    App.jsx              # Settings page (layer toggles + whitelist)
+    main.jsx             # React entry for options page
 public/
   model/
     weights.json         # Trained MLP weights + scaler params (~24 KB)
