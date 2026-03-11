@@ -45,20 +45,9 @@ Ordered by priority. Fix Plan items come first (bugs > gaps), then backlog.
 
 **Files:** `train_model/train.py`, `public/model/weights.json`
 
-- [ ] Add PhiUSIIL dataset (Kaggle: `shashwatwork/web-page-phishing-detection-dataset`) to `DATASET_URLS` in `train.py`, or download PhishTank verified feed CSV manually
+- [x] Add PhiUSIIL dataset (Kaggle: `shashwatwork/web-page-phishing-detection-dataset`) to `DATASET_URLS` in `train.py`, or download PhishTank verified feed CSV manually
 - [ ] Run `python train.py` — verify >90% accuracy on held-out real data (not synthetic)
 - [ ] Commit updated `weights.json`
-
----
-
-## In Progress
-
-- [ ] **TensorFlow.js ML classifier upgrade**
-  - Source pre-trained phishing URL classifier from HuggingFace (UCI Phishing Dataset)
-  - Convert to TensorFlow.js format and bundle into extension (fully in-browser)
-  - Feed URL features (length, entropy, subdomain count, TLD risk, etc.) as input vector
-  - Blend ML score with existing heuristic score for final result
-  - Target: ~95% accuracy on known phishing URLs
 
 ---
 
@@ -67,8 +56,8 @@ Ordered by priority. Fix Plan items come first (bugs > gaps), then backlog.
 - [ ] Set up Google Safe Browsing API key + deploy Cloudflare Worker
 - [ ] Set up PhishTank API key
 - [ ] Test on real phishing URLs from PhishTank feed
-- [ ] Add settings page (toggle layers on/off, whitelist domains)
-- [ ] Add phishing report button in popup (submit to PhishTank)
+- [x] Add settings page (toggle layers on/off, whitelist domains)
+- [x] Add phishing report button in popup (submit to PhishTank)
 - [ ] Publish to Chrome Web Store
 
 ---
@@ -84,3 +73,6 @@ Ordered by priority. Fix Plan items come first (bugs > gaps), then backlog.
 - [x] React popup UI (risk badge, score bar, flag list, accessibility-first)
 - [x] Hover tooltips via content script
 - [x] Service worker orchestrator
+- [x] Settings page (layer toggles + domain whitelist)
+- [x] Report-as-phishing button in popup
+- [x] train.py: PhiUSIIL dataset support, confusion matrix, feature importance output
