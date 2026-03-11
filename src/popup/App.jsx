@@ -10,9 +10,14 @@ function getLevel(score) {
   return 'dangerous';
 }
 
+const PHISHTANK_URL = 'https://www.phishtank.com/add_web_phishing.php';
+const REPORTS_KEY = 'phishshield_reports';
+
 export default function App() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [currentUrl, setCurrentUrl] = useState(null);
+  const [reported, setReported] = useState(false);
 
   useEffect(() => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -21,6 +26,7 @@ export default function App() {
         setLoading(false);
         return;
       }
+      setCurrentUrl(url);
 
       chrome.storage.local.get(url, (data) => {
         if (data[url]) {
@@ -60,12 +66,29 @@ export default function App() {
 
   const level = getLevel(result.score);
 
+  function handleReport() {
+    chrome.storage.local.get(REPORTS_KEY, (data) => {
+      const existing = data[REPORTS_KEY] || [];
+      existing.push({ url: currentUrl, reportedAt: Date.now(), score: result.score });
+      chrome.storage.local.set({ [REPORTS_KEY]: existing });
+    });
+    chrome.tabs.create({ url: PHISHTANK_URL });
+    setReported(true);
+    setTimeout(() => setReported(false), 2000);
+  }
+
   return (
     <div>
       <RiskBadge score={result.score} level={level} />
       <ScoreBar score={result.score} />
       <FlagList flags={result.flags} />
       <HelpSection />
+      <div className="report-row">
+        {reported
+          ? <span className="report-feedback">Reported!</span>
+          : <button className="report-btn" onClick={handleReport}>⚑ Report as Phishing</button>
+        }
+      </div>
     </div>
   );
 }

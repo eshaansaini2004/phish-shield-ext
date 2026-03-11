@@ -164,6 +164,35 @@ body {
   margin-bottom: 0;
 }
 
+/* Report button */
+.report-row {
+  margin-top: 12px;
+  text-align: center;
+}
+
+.report-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 11px;
+  color: #999;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: color 0.15s, text-decoration-color 0.15s;
+}
+
+.report-btn:hover {
+  color: #666;
+  text-decoration-color: #666;
+}
+
+.report-feedback {
+  font-size: 11px;
+  color: #4caf50;
+  font-weight: 600;
+}
+
 /* Loading spinner */
 .spinner {
   display: flex;
