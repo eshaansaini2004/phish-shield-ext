@@ -23,6 +23,8 @@ const SUSPICIOUS_TLDS = [
 
 const REDIRECT_PARAMS = ['url', 'redirect', 'goto', 'link'];
 
+const CREDENTIAL_HARVEST_KEYWORDS = ['login', 'signin', 'verify', 'secure', 'account', 'confirm'];
+
 function levenshtein(a, b) {
   const m = a.length, n = b.length;
   const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
@@ -147,38 +149,62 @@ function analyzeURL(url) {
     if (details.misspelledBrand) break;
   }
 
-  // 9. Homoglyph / non-ASCII in domain (check raw URL since URL parser converts to punycode)
+  // 9. Brand name in URL path with credential-harvest keyword
+  // Gated to avoid false positives on articles/docs that mention brands in paths.
+  // Only fires if a different brand-impersonation check hasn't already flagged this URL.
+  const alreadyFlaggedBrandImpersonation = flags.some(f =>
+    f.name === 'deceptive_subdomain' || f.name === 'brand_misspelling'
+  );
+  // If the site itself is a major brand (e.g. amazon.com docs mentioning paypal),
+  // path-based brand mentions are almost always legitimate.
+  const hostIsKnownBrand = BRANDS.some(b => tld1.startsWith(b + '.'));
+  if (!alreadyFlaggedBrandImpersonation && !hostIsKnownBrand) {
+    const pathHasHarvestKeyword = CREDENTIAL_HARVEST_KEYWORDS.some(kw => pathAndQuery.includes(kw));
+    if (pathHasHarvestKeyword) {
+      for (const brand of BRANDS) {
+        const brandInPath = new RegExp(`(^|[^a-z0-9])${brand}([^a-z0-9]|$)`).test(pathAndQuery);
+        const hostnameOwnsBrand = hostnameLower.includes(brand);
+        if (brandInPath && !hostnameOwnsBrand) {
+          addFlag('brand_in_path', 'medium', `This link's address mentions "${brand}" in the path alongside sign-in terms, but the website itself isn't ${brand.charAt(0).toUpperCase() + brand.slice(1)}.`);
+          details.brandInPath = brand;
+          break;
+        }
+      }
+    }
+  }
+
+  // 10. Homoglyph / non-ASCII in domain (check raw URL since URL parser converts to punycode)
   if (/[^\x00-\x7F]/.test(rawHost) || hostnameLower.startsWith('xn--')) {
     addFlag('homoglyph', 'high', 'The domain contains special Unicode characters that can make it look like a different, legitimate website.');
     details.hasNonAscii = true;
   }
 
-  // 10. URL shortener
+  // 11. URL shortener
   if (SHORTENER_DOMAINS.some(d => hostnameLower === d || hostnameLower.endsWith('.' + d))) {
     addFlag('url_shortener', 'medium', 'This is a shortened URL that hides where the link actually goes.');
     details.isShortener = true;
   }
 
-  // 11. Suspicious TLD
+  // 12. Suspicious TLD
   const matchedTld = SUSPICIOUS_TLDS.find(tld => hostnameLower.endsWith(tld));
   if (matchedTld) {
     addFlag('suspicious_tld', 'low', `This website uses the "${matchedTld}" domain extension, which is frequently associated with spam and phishing.`);
     details.suspiciousTld = matchedTld;
   }
 
-  // 12. Double extension pattern
+  // 13. Double extension pattern
   if (/\.\w{2,4}\.\w{2,4}$/.test(pathname) && /\.(exe|bat|cmd|scr|com|pif|vbs|js|msi|ps1)$/i.test(pathname)) {
     addFlag('double_extension', 'high', 'This link appears to disguise a dangerous file type by using a double file extension (e.g., document.pdf.exe).');
     details.doubleExtension = true;
   }
 
-  // 13. Hex/percent encoding in domain (check raw URL, not parsed hostname)
+  // 14. Hex/percent encoding in domain (check raw URL, not parsed hostname)
   if (/%[0-9a-fA-F]{2}/.test(rawHost)) {
     addFlag('encoded_domain', 'medium', 'The domain name uses percent-encoded characters, which can be used to disguise the real destination.');
     details.encodedDomain = true;
   }
 
-  // 14. Redirect chain indicators
+  // 15. Redirect chain indicators
   const searchLower = search.toLowerCase();
   const foundRedirects = REDIRECT_PARAMS.filter(p => searchLower.includes(p + '='));
   if (foundRedirects.length > 0) {
