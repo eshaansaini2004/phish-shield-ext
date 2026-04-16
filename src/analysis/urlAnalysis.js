@@ -23,7 +23,10 @@ const SUSPICIOUS_TLDS = [
 
 const REDIRECT_PARAMS = ['url', 'redirect', 'goto', 'link'];
 
-const CREDENTIAL_HARVEST_KEYWORDS = ['login', 'signin', 'verify', 'secure', 'account', 'confirm'];
+// Tighter subset of SUSPICIOUS_KEYWORDS: action verbs only, used to gate brand_in_path.
+// Broader list includes nouns like 'banking'/'password' that appear in docs and aren't
+// strong enough signal on their own to flag a brand mention.
+const HARVEST_ACTION_KEYWORDS = ['login', 'signin', 'verify', 'secure', 'account', 'confirm'];
 
 function levenshtein(a, b) {
   const m = a.length, n = b.length;
@@ -159,7 +162,7 @@ function analyzeURL(url) {
   // path-based brand mentions are almost always legitimate.
   const hostIsKnownBrand = BRANDS.some(b => tld1.startsWith(b + '.'));
   if (!alreadyFlaggedBrandImpersonation && !hostIsKnownBrand) {
-    const pathHasHarvestKeyword = CREDENTIAL_HARVEST_KEYWORDS.some(kw => pathAndQuery.includes(kw));
+    const pathHasHarvestKeyword = HARVEST_ACTION_KEYWORDS.some(kw => pathAndQuery.includes(kw));
     if (pathHasHarvestKeyword) {
       for (const brand of BRANDS) {
         const brandInPath = new RegExp(`(^|[^a-z0-9])${brand}([^a-z0-9]|$)`).test(pathAndQuery);
