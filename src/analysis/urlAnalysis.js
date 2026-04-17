@@ -29,7 +29,6 @@ const REDIRECT_PARAMS = ['url', 'redirect', 'goto', 'link'];
 const BRAND_OWNED_COMPOUNDS = new Set([
   'applepay.com', 'googlemail.com', 'paypalobjects.com',
   'microsoft365.com', 'microsoftonline.com', 'amazonpay.com',
-  'facebookmail.com', 'instagrammers.com',
 ]);
 
 // Tighter subset of SUSPICIOUS_KEYWORDS: action verbs only, used to gate brand_in_path.
