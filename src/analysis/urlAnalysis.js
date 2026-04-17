@@ -23,6 +23,15 @@ const SUSPICIOUS_TLDS = [
 
 const REDIRECT_PARAMS = ['url', 'redirect', 'goto', 'link'];
 
+// Registrable domains that legitimately contain a brand name as a compound.
+// Without this allowlist, e.g. applepay.com would trigger deceptive_subdomain
+// because 'apple' appears in the hostname but tld1 !== 'apple.<tld>'.
+const BRAND_OWNED_COMPOUNDS = new Set([
+  'applepay.com', 'googlemail.com', 'paypalobjects.com',
+  'microsoft365.com', 'microsoftonline.com', 'amazonpay.com',
+  'facebookmail.com', 'instagrammers.com',
+]);
+
 // Tighter subset of SUSPICIOUS_KEYWORDS: action verbs only, used to gate brand_in_path.
 // Broader list includes nouns like 'banking'/'password' that appear in docs and aren't
 // strong enough signal on their own to flag a brand mention.
@@ -98,13 +107,18 @@ function analyzeURL(url) {
     details.subdomainLevels = subdomainParts.length;
   }
 
-  // 3. Deceptive subdomain (brand in subdomain but different TLD+1)
+  // 3. Deceptive subdomain (brand in hostname but TLD+1 is not brand.<tld>)
+  // Uses brand + '.' so that paypal-secure.com / paypallogin.com are caught,
+  // while paypal.com / developer.paypal.com are not. Known brand-owned compounds
+  // (applepay.com etc.) are excluded via BRAND_OWNED_COMPOUNDS.
   const tld1 = getTLD1(hostnameLower);
-  for (const brand of BRANDS) {
-    if (hostnameLower.includes(brand) && !tld1.startsWith(brand)) {
-      addFlag('deceptive_subdomain', 'high', `This link disguises itself as ${brand.charAt(0).toUpperCase() + brand.slice(1)} but leads to a different website.`);
-      details.impersonatedBrand = brand;
-      break;
+  if (!BRAND_OWNED_COMPOUNDS.has(tld1)) {
+    for (const brand of BRANDS) {
+      if (hostnameLower.includes(brand) && !tld1.startsWith(brand + '.')) {
+        addFlag('deceptive_subdomain', 'high', `This link disguises itself as ${brand.charAt(0).toUpperCase() + brand.slice(1)} but leads to a different website.`);
+        details.impersonatedBrand = brand;
+        break;
+      }
     }
   }
 
