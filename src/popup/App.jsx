@@ -20,6 +20,8 @@ export default function App() {
   const [reported, setReported] = useState(false);
 
   useEffect(() => {
+    let listener = null;
+
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const url = tabs[0]?.url;
       if (!url) {
@@ -28,28 +30,30 @@ export default function App() {
       }
       setCurrentUrl(url);
 
-      chrome.storage.local.get(url, (data) => {
-        if (data[url]) {
-          setResult(data[url]);
-          setLoading(false);
-          return;
-        }
-
-        // No cached result — trigger analysis now (popup opened on already-loaded page)
-        chrome.runtime.sendMessage({ type: 'ANALYZE_URL', url, tabId: tabs[0].id });
-        // keep loading=true; storage.onChanged listener below will pick up the result
-      });
-
-      // listen for updates in case analysis finishes while popup is open
-      const listener = (changes) => {
+      // Register listener before storage.local.get to avoid the race where analysis
+      // completes between the get callback returning empty and addListener being called.
+      listener = (changes) => {
         if (changes[url]?.newValue) {
           setResult(changes[url].newValue);
           setLoading(false);
         }
       };
       chrome.storage.onChanged.addListener(listener);
-      return () => chrome.storage.onChanged.removeListener(listener);
+
+      chrome.storage.local.get(url, (data) => {
+        if (data[url]) {
+          setResult(data[url]);
+          setLoading(false);
+          return;
+        }
+        // No cached result — trigger analysis now (popup opened on already-loaded page)
+        chrome.runtime.sendMessage({ type: 'ANALYZE_URL', url, tabId: tabs[0].id });
+      });
     });
+
+    return () => {
+      if (listener) chrome.storage.onChanged.removeListener(listener);
+    };
   }, []);
 
   if (loading || !result) {
