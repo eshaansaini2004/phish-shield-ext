@@ -93,16 +93,7 @@ function analyzeDownload(downloadItem) {
     });
   }
 
-  // 5. Auto-download (not user-initiated)
-  if (!downloadItem.byExtensionId) {
-    flags.push({
-      name: 'auto-download',
-      severity: 'medium',
-      message: 'This download was not initiated by a user action. Automatic downloads can be a sign of a malicious page.',
-    });
-  }
-
-  // 6. HTTP source
+  // 5. HTTP source
   if (url.startsWith('http://')) {
     flags.push({
       name: 'http-source',
@@ -111,7 +102,7 @@ function analyzeDownload(downloadItem) {
     });
   }
 
-  // 7. Suspicious source URL
+  // 6. Suspicious source URL
   const suspiciousKw = urlContainsSuspiciousKeyword(url) || urlContainsSuspiciousKeyword(referrer);
   if (suspiciousKw) {
     flags.push({
