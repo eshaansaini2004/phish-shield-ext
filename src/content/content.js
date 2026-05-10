@@ -74,8 +74,17 @@ function scoreColor(score) {
 }
 
 // ---- Link hover analysis ----
+const CACHE_MAX = 200;
 const analysisCache = new Map();
 let currentHref = null;
+
+function cacheSet(url, result) {
+  if (analysisCache.size >= CACHE_MAX) {
+    // evict oldest entry
+    analysisCache.delete(analysisCache.keys().next().value);
+  }
+  analysisCache.set(url, result);
+}
 
 function onMouseOver(e) {
   const anchor = e.target.closest('a[href]');
@@ -119,7 +128,7 @@ function onMouseOut(e) {
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'ANALYSIS_PRELIMINARY' || msg.type === 'ANALYSIS_COMPLETE') {
     const { url, result } = msg;
-    analysisCache.set(url, result);
+    cacheSet(url, result);
 
     // Update tooltip if it's currently visible
     const tip = document.getElementById(TOOLTIP_ID);
@@ -168,15 +177,16 @@ function init() {
     runPageAnalysis();
   }
 
-  // Watch for dynamically added links (no action needed per-link since we use delegation)
-  // But we re-analyze the page if significant DOM changes happen
+  // Re-analyze when significant DOM changes happen, but ignore our own tooltip mutations.
   let debounceTimer = null;
-  const observer = new MutationObserver(() => {
+  const observer = new MutationObserver((mutations) => {
+    const isOwnTooltip = mutations.every((m) =>
+      m.target.id === TOOLTIP_ID ||
+      (m.addedNodes.length > 0 && Array.from(m.addedNodes).every((n) => n.id === TOOLTIP_ID))
+    );
+    if (isOwnTooltip) return;
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      // re-scan for new DOM phishing indicators
-      runPageAnalysis();
-    }, 2000);
+    debounceTimer = setTimeout(runPageAnalysis, 2000);
   });
 
   observer.observe(document.documentElement, {
