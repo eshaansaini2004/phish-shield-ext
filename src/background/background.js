@@ -41,7 +41,11 @@ function setBadge(tabId, score) {
 // Merge DOM analysis result into an existing URL result object (pure, no I/O)
 function applyDomResult(existing, domResult) {
   const merged = { ...existing };
-  merged.flags = [...(existing.flags || []), ...(domResult.flags || [])];
+  // De-dup by name+message so identical flags don't stack, but distinct flags with
+  // the same name (e.g. cross_domain_form on two different hosts) are preserved.
+  const seen = new Set((existing.flags || []).map((f) => f.name + '\x00' + f.message));
+  const newFlags = (domResult.flags || []).filter((f) => !seen.has(f.name + '\x00' + f.message));
+  merged.flags = [...(existing.flags || []), ...newFlags];
   // Take the higher of the two scores; DOM is an independent signal, not additive
   merged.score = Math.min(100, Math.max(existing.score, domResult.score || 0));
   return merged;
