@@ -3,8 +3,8 @@
 
 const KNOWN_BRANDS = [
   'paypal', 'google', 'amazon', 'facebook', 'apple', 'microsoft',
-  'netflix', 'instagram', 'twitter', 'chase', 'bankofamerica',
-  'wellsfargo', 'citibank', 'ebay'
+  'netflix', 'instagram', 'twitter', 'linkedin', 'chase', 'bankofamerica',
+  'wellsfargo', 'citibank', 'ebay', 'dropbox', 'yahoo',
 ];
 
 const SENSITIVE_FIELD_PATTERNS = [
@@ -144,8 +144,14 @@ function checkFaviconMismatch() {
   return null;
 }
 
-// Check 7: Brand name in title/h1 but not in domain
+// Check 7: Brand name in title/h1 but not in domain, gated on credential-harvest signals.
+// News articles and docs frequently mention brands in headings — only flag when the page
+// also has a password field or a form, which is the actual phishing pattern.
 function checkBrandImpersonation() {
+  // Gate on password field only — forms exist on most pages (search, comment, newsletter)
+  // and don't indicate credential harvesting on their own.
+  if (document.querySelector('input[type="password"]') === null) return [];
+
   const flags = [];
   const title = (document.title || '').toLowerCase();
   const h1Elements = document.querySelectorAll('h1');
