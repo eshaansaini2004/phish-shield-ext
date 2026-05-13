@@ -69,9 +69,19 @@ function getHostnameParts(url) {
   }
 }
 
+// Known two-part TLD suffixes — getTLD1 must take three labels for these.
+const MULTI_PART_TLDS = new Set([
+  'co.uk', 'co.in', 'co.jp', 'co.au', 'co.nz', 'co.za',
+  'com.au', 'com.br', 'com.cn', 'com.mx', 'com.ar',
+  'org.uk', 'net.au', 'gov.uk', 'ac.uk', 'edu.au',
+]);
+
 function getTLD1(hostname) {
-  // returns registrable domain (TLD+1), e.g. evil.com from paypal.com.evil.com
+  // returns registrable domain (TLD+1), handling two-part TLDs like co.uk
   const parts = hostname.split('.');
+  if (parts.length >= 3 && MULTI_PART_TLDS.has(parts.slice(-2).join('.'))) {
+    return parts.slice(-3).join('.');
+  }
   if (parts.length >= 2) return parts.slice(-2).join('.');
   return hostname;
 }
@@ -107,13 +117,26 @@ function analyzeURL(url) {
   }
 
   // 3. Deceptive subdomain (brand in hostname but TLD+1 is not brand.<tld>)
-  // Uses brand + '.' so that paypal-secure.com / paypallogin.com are caught,
-  // while paypal.com / developer.paypal.com are not. Known brand-owned compounds
-  // (applepay.com etc.) are excluded via BRAND_OWNED_COMPOUNDS.
+  // Known brand-owned compounds (applepay.com etc.) are excluded via BRAND_OWNED_COMPOUNDS.
+  // For multi-part TLDs (paypal.co.uk) we check subdomain labels to avoid both
+  // false-positives (paypal.co.uk → legit) and misses (paypal.evil.co.uk → deceptive).
   const tld1 = getTLD1(hostnameLower);
+  const hostParts = hostnameLower.split('.');
+  const last2 = hostParts.slice(-2).join('.');
+  const isMultiPartHost = MULTI_PART_TLDS.has(last2);
+
   if (!BRAND_OWNED_COMPOUNDS.has(tld1)) {
     for (const brand of BRANDS) {
-      if (hostnameLower.includes(brand) && !tld1.startsWith(brand + '.')) {
+      if (!hostnameLower.includes(brand)) continue;
+      let deceptive;
+      if (isMultiPartHost) {
+        // For multi-part TLDs: deceptive only if brand appears in subdomain labels
+        // (the labels before the 3-label registrable domain, e.g. 'paypal' in paypal.evil.co.uk)
+        deceptive = hostParts.slice(0, -3).some((l) => l.includes(brand));
+      } else {
+        deceptive = !tld1.startsWith(brand + '.');
+      }
+      if (deceptive) {
         addFlag('deceptive_subdomain', 'high', `This link disguises itself as ${brand.charAt(0).toUpperCase() + brand.slice(1)} but leads to a different website.`);
         details.impersonatedBrand = brand;
         break;
