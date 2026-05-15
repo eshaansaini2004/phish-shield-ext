@@ -51,59 +51,11 @@ function applyDomResult(existing, domResult) {
   return merged;
 }
 
-// Handle messages from content script
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === 'ANALYZE_URL' && msg.url) {
-    handleAnalyzeURL(msg.url, sender, msg.tabId);
-    sendResponse({ status: 'started' });
-  }
-
-  if (msg.type === 'DOM_ANALYSIS' && sender.tab) {
-    // Merge DOM flags/score into the main result entry so App.jsx sees them.
-    // Race: DOM often arrives before handleAnalyzeURL finishes (async API call).
-    // If no main result yet, stash under dom_pending: so handleAnalyzeURL picks it up.
-    const { url, result: domResult } = msg;
-    getSettings().then((settings) => {
-      if (settings.disableDom) return;
-      const domPendingKey = `dom_pending:${url}`;
-      chrome.storage.local.get(url, (data) => {
-        const existing = data[url];
-        if (!existing) {
-          chrome.storage.local.set({ [domPendingKey]: domResult });
-          return;
-        }
-        chrome.storage.local.set({ [url]: applyDomResult(existing, domResult) });
-      });
-    });
-  }
-
-  if (msg.type === 'RUN_DOM_ANALYSIS' && sender.tab) {
-    // Content script asking background to be aware it ran DOM analysis
-    sendResponse({ status: 'ok' });
-  }
-
-  return false; // not using async sendResponse
-});
-
-async function handleAnalyzeURL(url, sender, fallbackTabId) {
-  const tabId = sender.tab?.id ?? fallbackTabId;
-  if (!tabId) return;
-
-  const settings = await getSettings();
-
-  // Whitelist check: return safe immediately if domain is trusted
-  try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    if ((settings.whitelist || []).some((d) => hostname === d || hostname.endsWith(`.${d}`))) {
-      const safeResult = { score: 0, flags: [], whitelisted: true };
-      chrome.storage.local.set({ [url]: safeResult });
-      setBadge(tabId, 0);
-      chrome.tabs.sendMessage(tabId, { type: 'ANALYSIS_COMPLETE', url, result: safeResult }).catch(() => {});
-      return;
-    }
-  } catch (_) { /* invalid URL, fall through */ }
-
-  // Step 1: fast local URL analysis + ML score
+// Shared analysis pipeline: URL heuristics + ML + API lookup + pending DOM merge.
+// Returns the merged result object. Side effects (badge, storage, messages) are
+// handled by the two callers so they can behave differently.
+async function runAnalysisPipeline(url, settings) {
+  // Step 1: fast local URL analysis + ML score (synchronous)
   const urlResult = settings.disableUrlAnalysis
     ? { score: 0, flags: [] }
     : analyzeURL(url);
@@ -124,19 +76,8 @@ async function handleAnalyzeURL(url, sender, fallbackTabId) {
     }
   }
 
-  // Send preliminary result immediately
-  chrome.tabs.sendMessage(tabId, {
-    type: 'ANALYSIS_PRELIMINARY',
-    url,
-    result: urlResult,
-  }).catch(() => {}); // tab might have navigated away
-
-  setBadge(tabId, urlResult.score);
-
   // Step 2: async API lookup
   const apiData = await fetchThreatAnalysis(url);
-
-  // Step 3: merge results
   const merged = { ...urlResult };
 
   if (apiData) {
@@ -169,7 +110,7 @@ async function handleAnalyzeURL(url, sender, fallbackTabId) {
     merged.apiData = apiData;
   }
 
-  // Check if DOM analysis already arrived while we were awaiting the API call
+  // Step 3: apply any DOM analysis that arrived while we awaited the API
   if (!settings.disableDom) {
     const domPendingKey = `dom_pending:${url}`;
     const stored = await chrome.storage.local.get(domPendingKey);
@@ -180,16 +121,73 @@ async function handleAnalyzeURL(url, sender, fallbackTabId) {
     }
   }
 
-  // Store final result
-  chrome.storage.local.set({ [url]: merged });
+  return { urlResult, merged };
+}
 
-  // Send final result to content script
+// Handle messages from content script
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'ANALYZE_URL' && msg.url) {
+    handleAnalyzeURL(msg.url, sender, msg.tabId);
+    sendResponse({ status: 'started' });
+  }
+
+  if (msg.type === 'DOM_ANALYSIS' && sender.tab) {
+    // Merge DOM flags/score into the main result entry so App.jsx sees them.
+    // Race: DOM often arrives before handleAnalyzeURL finishes (async API call).
+    // If no main result yet, stash under dom_pending: so handleAnalyzeURL picks it up.
+    const { url, result: domResult } = msg;
+    getSettings().then((settings) => {
+      if (settings.disableDom) return;
+      const domPendingKey = `dom_pending:${url}`;
+      chrome.storage.local.get(url, (data) => {
+        const existing = data[url];
+        if (!existing) {
+          chrome.storage.local.set({ [domPendingKey]: domResult });
+          return;
+        }
+        chrome.storage.local.set({ [url]: applyDomResult(existing, domResult) });
+      });
+    });
+  }
+
+  if (msg.type === 'RUN_DOM_ANALYSIS' && sender.tab) {
+    sendResponse({ status: 'ok' });
+  }
+
+  return false; // not using async sendResponse
+});
+
+async function handleAnalyzeURL(url, sender, fallbackTabId) {
+  const tabId = sender.tab?.id ?? fallbackTabId;
+  if (!tabId) return;
+
+  const settings = await getSettings();
+
+  // Whitelist check: return safe immediately if domain is trusted
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    if ((settings.whitelist || []).some((d) => hostname === d || hostname.endsWith(`.${d}`))) {
+      const safeResult = { score: 0, flags: [], whitelisted: true };
+      chrome.storage.local.set({ [url]: safeResult });
+      setBadge(tabId, 0);
+      chrome.tabs.sendMessage(tabId, { type: 'ANALYSIS_COMPLETE', url, result: safeResult }).catch(() => {});
+      return;
+    }
+  } catch (_) { /* invalid URL, fall through */ }
+
+  // Send preliminary result from synchronous checks immediately, before the API call
+  const preliminaryResult = settings.disableUrlAnalysis ? { score: 0, flags: [] } : analyzeURL(url);
   chrome.tabs.sendMessage(tabId, {
-    type: 'ANALYSIS_COMPLETE',
+    type: 'ANALYSIS_PRELIMINARY',
     url,
-    result: merged,
+    result: preliminaryResult,
   }).catch(() => {});
+  setBadge(tabId, preliminaryResult.score);
 
+  const { merged } = await runAnalysisPipeline(url, settings);
+
+  chrome.storage.local.set({ [url]: merged });
+  chrome.tabs.sendMessage(tabId, { type: 'ANALYSIS_COMPLETE', url, result: merged }).catch(() => {});
   setBadge(tabId, merged.score);
 }
 
@@ -240,57 +238,8 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
     }
   } catch (_) { /* invalid URL, fall through */ }
 
-  // Run the same analysis pipeline used for hover
-  const urlResult = settings.disableUrlAnalysis ? { score: 0, flags: [] } : analyzeURL(url);
+  const { merged } = await runAnalysisPipeline(url, settings);
 
-  if (!settings.disableML) {
-    const mlScore = predictPhishing(url);
-    if (mlScore !== null) {
-      urlResult.score = Math.min(100, Math.round(urlResult.score * 0.45 + mlScore * 0.55));
-      urlResult.mlScore = mlScore;
-      if (mlScore >= 60) {
-        urlResult.flags.push({
-          name: 'ml_classifier',
-          severity: mlScore >= 80 ? 'high' : 'medium',
-          message: `Machine learning classifier flagged this URL as likely phishing (${mlScore}% confidence).`,
-        });
-      }
-    }
-  }
-
-  const apiData = await fetchThreatAnalysis(url);
-  const merged = { ...urlResult };
-
-  if (apiData) {
-    let apiBoost = 0;
-    if (apiData.safeBrowsing.isMalicious) {
-      apiBoost = Math.max(apiBoost, 80);
-      merged.flags.push({ name: 'safe_browsing_hit', severity: 'high', message: 'This URL is flagged as malicious by Google Safe Browsing.' });
-    }
-    if (apiData.phishTank.isPhishing) {
-      apiBoost = Math.max(apiBoost, 70);
-      merged.flags.push({ name: 'phishtank_hit', severity: 'high', message: 'This URL is listed in PhishTank as a known phishing site.' });
-    }
-    if (apiData.domainAge.isNew) {
-      apiBoost = Math.max(apiBoost, 15);
-      merged.flags.push({ name: 'new_domain', severity: 'low', message: 'This domain was recently registered, which is common for phishing sites.' });
-    }
-    merged.score = Math.min(100, Math.max(urlResult.score, apiBoost));
-    merged.apiData = apiData;
-  }
-
-  // Check if DOM analysis already arrived while we were awaiting the API call
-  if (!settings.disableDom) {
-    const domPendingKeyNav = `dom_pending:${url}`;
-    const storedNav = await chrome.storage.local.get(domPendingKeyNav);
-    const pendingDomNav = storedNav[domPendingKeyNav];
-    if (pendingDomNav) {
-      Object.assign(merged, applyDomResult(merged, pendingDomNav));
-      chrome.storage.local.remove(domPendingKeyNav);
-    }
-  }
-
-  // Store result so the popup can display it
   chrome.storage.local.set({ [url]: merged });
   setBadge(tabId, merged.score);
 
