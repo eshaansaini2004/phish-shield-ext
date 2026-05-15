@@ -156,9 +156,8 @@ function runPageAnalysis() {
       url: location.href,
       result,
     });
-
-    // Also request URL analysis for the current page
-    chrome.runtime.sendMessage({ type: 'ANALYZE_URL', url: location.href });
+    // URL analysis is already handled by webNavigation.onCommitted in the background.
+    // Sending ANALYZE_URL here would cause a second API fetch per page load.
   } catch (err) {
     console.warn('[PhishShield] DOM analysis error:', err.message);
   }
