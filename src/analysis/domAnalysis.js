@@ -106,27 +106,25 @@ function checkScarewareText() {
   return null;
 }
 
-// Check 5: Sensitive fields on HTTP
+// Check 5: Sensitive fields on HTTP — fires once listing all matched patterns
 function checkSensitiveFieldsOnHttp() {
   if (location.protocol === 'https:') return null;
-  const flags = [];
+  const matched = new Set();
   document.querySelectorAll('input').forEach(input => {
     const identifiers = [
       (input.name || '').toLowerCase(),
       (input.id || '').toLowerCase(),
       (input.placeholder || '').toLowerCase()
     ].join(' ');
-
     const match = SENSITIVE_FIELD_PATTERNS.find(p => identifiers.includes(p));
-    if (match) {
-      flags.push({
-        name: 'sensitive_field_http',
-        severity: 'high',
-        message: `This page asks for sensitive information (${match}) without a secure connection.`
-      });
-    }
+    if (match) matched.add(match);
   });
-  return flags;
+  if (matched.size === 0) return null;
+  return {
+    name: 'sensitive_field_http',
+    severity: 'high',
+    message: `This page asks for sensitive information (${[...matched].join(', ')}) without a secure connection.`
+  };
 }
 
 // Check 6: Favicon domain mismatch
