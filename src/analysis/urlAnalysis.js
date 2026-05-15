@@ -1,5 +1,7 @@
 // Layer 1: Static URL Analysis
 
+import { MULTI_PART_TLDS, getTLD1 } from './domainUtils.js';
+
 const BRANDS = [
   'google', 'paypal', 'amazon', 'facebook', 'apple', 'microsoft',
   'netflix', 'instagram', 'twitter', 'linkedin', 'chase',
@@ -30,6 +32,21 @@ const BRAND_OWNED_COMPOUNDS = new Set([
   'applepay.com', 'googlemail.com', 'paypalobjects.com',
   'microsoft365.com', 'microsoftonline.com', 'amazonpay.com',
 ]);
+
+// (brand, parent registrable domain) pairs where the brand legitimately appears as
+// a subdomain of a different owner-controlled domain. outlook.live.com is Microsoft;
+// gmail.google.com redirects to Gmail. Without this map, the deceptive_subdomain
+// check would false-flag these as impersonation.
+const BRAND_LEGIT_PARENTS = {
+  outlook: ['live.com', 'office.com', 'microsoft.com'],
+  gmail: ['google.com', 'googlemail.com'],
+  google: ['googleusercontent.com', 'googleapis.com', 'gstatic.com', 'youtube.com'],
+  microsoft: ['live.com', 'office.com', 'msn.com', 'bing.com'],
+  apple: ['icloud.com'],
+  amazon: ['awsstatic.com', 'amazonaws.com', 'a2z.com'],
+  facebook: ['fb.com', 'fbcdn.net', 'messenger.com', 'instagram.com'],
+  instagram: ['fb.com', 'fbcdn.net', 'facebook.com'],
+};
 
 // Tighter subset of SUSPICIOUS_KEYWORDS: action verbs only, used to gate brand_in_path.
 // Broader list includes nouns like 'banking'/'password' that appear in docs and aren't
@@ -67,23 +84,6 @@ function getHostnameParts(url) {
     const search = qIdx > -1 ? url.slice(qIdx) : '';
     return { hostname, pathname, search, full: null };
   }
-}
-
-// Known two-part TLD suffixes — getTLD1 must take three labels for these.
-const MULTI_PART_TLDS = new Set([
-  'co.uk', 'co.in', 'co.jp', 'co.au', 'co.nz', 'co.za',
-  'com.au', 'com.br', 'com.cn', 'com.mx', 'com.ar',
-  'org.uk', 'net.au', 'gov.uk', 'ac.uk', 'edu.au',
-]);
-
-function getTLD1(hostname) {
-  // returns registrable domain (TLD+1), handling two-part TLDs like co.uk
-  const parts = hostname.split('.');
-  if (parts.length >= 3 && MULTI_PART_TLDS.has(parts.slice(-2).join('.'))) {
-    return parts.slice(-3).join('.');
-  }
-  if (parts.length >= 2) return parts.slice(-2).join('.');
-  return hostname;
 }
 
 function analyzeURL(url) {
@@ -128,6 +128,9 @@ function analyzeURL(url) {
   if (!BRAND_OWNED_COMPOUNDS.has(tld1)) {
     for (const brand of BRANDS) {
       if (!hostnameLower.includes(brand)) continue;
+      // Skip if the registrable domain is a known legit parent for this brand
+      // (e.g. outlook.live.com — Microsoft hosts Outlook under live.com).
+      if ((BRAND_LEGIT_PARENTS[brand] || []).includes(tld1)) continue;
       let deceptive;
       if (isMultiPartHost) {
         // For multi-part TLDs: deceptive only if brand appears in subdomain labels
@@ -145,9 +148,12 @@ function analyzeURL(url) {
   }
 
   // 4. Suspicious keywords in path/query
+  // A single keyword (e.g. /login on github.com) is normal. Phishing URLs typically
+  // chain multiple credential-harvest terms ("secure-login-verify-account"). Requiring
+  // ≥2 distinct keywords cuts the dominant FP source without missing real attacks.
   const foundKeywords = SUSPICIOUS_KEYWORDS.filter(kw => pathAndQuery.includes(kw));
-  if (foundKeywords.length > 0) {
-    addFlag('suspicious_keywords', 'medium', `The URL path contains suspicious terms like "${foundKeywords[0]}" that are often used in phishing pages.`);
+  if (foundKeywords.length >= 2) {
+    addFlag('suspicious_keywords', 'medium', `The URL contains multiple suspicious terms (${foundKeywords.slice(0, 3).join(', ')}) that are often used in phishing pages.`);
     details.suspiciousKeywords = foundKeywords;
   }
 
@@ -171,15 +177,21 @@ function analyzeURL(url) {
   }
 
   // 8. Brand misspellings via Levenshtein
+  // Short brands (<5 chars) collide too easily: 'play' vs 'ebay' is dist=2 and 'app'
+  // vs 'apple' is dist=2, so play.google.com and app.slack.com falsely flag.
+  // Require brand length ≥5, and only allow dist=2 when the label is at least as long
+  // as the brand (so 'paypa' → 'paypal' still catches, but 'app' → 'apple' doesn't).
   const domainWithoutTld = hostnameLower.split('.').slice(0, -1).join('');
   for (const brand of BRANDS) {
-    // skip exact matches (handled by deceptive subdomain check)
+    if (brand.length < 5) continue;
     if (domainWithoutTld === brand) continue;
-    // check each domain label individually
     for (const label of hostnameLower.split('.').slice(0, -1)) {
       if (label === brand) continue;
       const dist = levenshtein(label, brand);
-      if (dist > 0 && dist <= 2 && label.length >= brand.length - 2) {
+      if (dist === 0) continue;
+      const maxDist = label.length >= brand.length ? 2 : 1;
+      const minLen = brand.length - 1;
+      if (dist <= maxDist && label.length >= minLen) {
         addFlag('brand_misspelling', 'high', `The domain "${label}" looks like a misspelling of "${brand}", a common trick used in phishing.`);
         details.misspelledBrand = { label, brand, distance: dist };
         break;
