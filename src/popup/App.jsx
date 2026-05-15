@@ -59,7 +59,7 @@ export default function App() {
   if (loading || !result) {
     return (
       <div>
-        <RiskBadge score={0} level="loading" />
+        <RiskBadge level="loading" />
         <div className="spinner">
           <div className="spinner-circle" />
           <span className="spinner-text">Analyzing page...</span>
@@ -83,7 +83,7 @@ export default function App() {
 
   return (
     <div>
-      <RiskBadge score={result.score} level={level} />
+      <RiskBadge level={level} />
       <ScoreBar score={result.score} />
       <FlagList flags={result.flags} />
       <HelpSection />

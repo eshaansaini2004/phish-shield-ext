@@ -37,15 +37,12 @@ const labels = {
   loading: 'ANALYZING...',
 };
 
-export default function RiskBadge({ score, level }) {
+export default function RiskBadge({ level }) {
   const Icon = icons[level];
   return (
     <div className={`risk-badge ${level}`}>
       {Icon && <Icon />}
       <span className="label">{labels[level]}</span>
-      {level !== 'loading' && (
-        <span style={{ fontSize: '15px', marginTop: 4 }}>Score: {score}/100</span>
-      )}
     </div>
   );
 }
