@@ -21,6 +21,7 @@ export default function App() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [whitelistText, setWhitelistText] = useState('');
   const [saved, setSaved] = useState(false);
+  const [whitelistError, setWhitelistError] = useState('');
 
   useEffect(() => {
     chrome.storage.sync.get(SETTINGS_KEY, (data) => {
@@ -40,15 +41,37 @@ export default function App() {
   function handleWhitelistChange(e) {
     setWhitelistText(e.target.value);
     setSaved(false);
+    setWhitelistError('');
+  }
+
+  function parseWhitelist(raw) {
+    const invalid = [];
+    const domains = raw
+      .split('\n')
+      .map((line) => {
+        let d = line.trim().toLowerCase();
+        if (!d) return null;
+        // Strip protocol prefix if user pasted a full URL
+        d = d.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+        // Basic domain validation: must have at least one dot, no spaces, no slashes
+        if (!/^[a-z0-9*._-]+\.[a-z]{2,}$/.test(d)) {
+          invalid.push(line.trim());
+          return null;
+        }
+        return d;
+      })
+      .filter(Boolean);
+    return { domains, invalid };
   }
 
   function save() {
-    const whitelist = whitelistText
-      .split('\n')
-      .map((d) => d.trim().toLowerCase())
-      .filter(Boolean);
-
-    const toSave = { ...settings, whitelist };
+    const { domains, invalid } = parseWhitelist(whitelistText);
+    if (invalid.length > 0) {
+      setWhitelistError(`Invalid entries (remove or fix): ${invalid.join(', ')}`);
+      return;
+    }
+    setWhitelistError('');
+    const toSave = { ...settings, whitelist: domains };
     chrome.storage.sync.set({ [SETTINGS_KEY]: toSave }, () => {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -95,6 +118,9 @@ export default function App() {
           rows={6}
           spellCheck={false}
         />
+        {whitelistError && (
+          <p style={styles.errorText}>{whitelistError}</p>
+        )}
       </section>
 
       <div style={styles.footer}>
@@ -202,6 +228,11 @@ const styles = {
     boxSizing: 'border-box',
     color: '#1a1a1a',
     lineHeight: 1.6,
+  },
+  errorText: {
+    marginTop: 6,
+    fontSize: 13,
+    color: '#c62828',
   },
   footer: {
     display: 'flex',
