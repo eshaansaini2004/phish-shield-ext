@@ -1,6 +1,8 @@
 // Layer 2: DOM / Page Content Analysis
 // Scans the live page for phishing indicators in the DOM
 
+import { sameRegistrableDomain } from './domainUtils.js';
+
 const KNOWN_BRANDS = [
   'paypal', 'google', 'amazon', 'facebook', 'apple', 'microsoft',
   'netflix', 'instagram', 'twitter', 'linkedin', 'chase', 'bankofamerica',
@@ -32,8 +34,11 @@ function getHostname(url) {
   }
 }
 
+// Cross-domain only if the registrable domain differs. www.foo.com → foo.com or
+// cdn.foo.com → foo.com is *not* external; foo.com → bar.com is.
 function isExternal(hostname) {
-  return hostname && hostname !== location.hostname;
+  if (!hostname) return false;
+  return !sameRegistrableDomain(hostname, location.hostname);
 }
 
 // Check 1: Password field on non-HTTPS
