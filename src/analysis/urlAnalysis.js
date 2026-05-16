@@ -130,9 +130,12 @@ function analyzeURL(url) {
   }
 
   // 4. Suspicious keywords in path/query
+  // A single keyword (e.g. /login on github.com) is normal. Phishing URLs typically
+  // chain multiple credential-harvest terms ("secure-login-verify-account"). Requiring
+  // ≥2 distinct keywords cuts the dominant FP source without missing real attacks.
   const foundKeywords = SUSPICIOUS_KEYWORDS.filter(kw => pathAndQuery.includes(kw));
-  if (foundKeywords.length > 0) {
-    addFlag('suspicious_keywords', 'medium', `The URL path contains suspicious terms like "${foundKeywords[0]}" that are often used in phishing pages.`);
+  if (foundKeywords.length >= 2) {
+    addFlag('suspicious_keywords', 'medium', `The URL contains multiple suspicious terms (${foundKeywords.slice(0, 3).join(', ')}) that are often used in phishing pages.`);
     details.suspiciousKeywords = foundKeywords;
   }
 
