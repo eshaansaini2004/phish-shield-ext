@@ -159,15 +159,21 @@ function analyzeURL(url) {
   }
 
   // 8. Brand misspellings via Levenshtein
+  // Short brands (<5 chars) collide too easily: 'play' vs 'ebay' is dist=2 and 'app'
+  // vs 'apple' is dist=2, so play.google.com and app.slack.com falsely flag.
+  // Require brand length ≥5, and only allow dist=2 when the label is at least as long
+  // as the brand (so 'paypa' → 'paypal' still catches, but 'app' → 'apple' doesn't).
   const domainWithoutTld = hostnameLower.split('.').slice(0, -1).join('');
   for (const brand of BRANDS) {
-    // skip exact matches (handled by deceptive subdomain check)
+    if (brand.length < 5) continue;
     if (domainWithoutTld === brand) continue;
-    // check each domain label individually
     for (const label of hostnameLower.split('.').slice(0, -1)) {
       if (label === brand) continue;
       const dist = levenshtein(label, brand);
-      if (dist > 0 && dist <= 2 && label.length >= brand.length - 2) {
+      if (dist === 0) continue;
+      const maxDist = label.length >= brand.length ? 2 : 1;
+      const minLen = brand.length - 1;
+      if (dist <= maxDist && label.length >= minLen) {
         addFlag('brand_misspelling', 'high', `The domain "${label}" looks like a misspelling of "${brand}", a common trick used in phishing.`);
         details.misspelledBrand = { label, brand, distance: dist };
         break;
