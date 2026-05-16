@@ -33,6 +33,21 @@ const BRAND_OWNED_COMPOUNDS = new Set([
   'microsoft365.com', 'microsoftonline.com', 'amazonpay.com',
 ]);
 
+// (brand, parent registrable domain) pairs where the brand legitimately appears as
+// a subdomain of a different owner-controlled domain. outlook.live.com is Microsoft;
+// gmail.google.com redirects to Gmail. Without this map, the deceptive_subdomain
+// check would false-flag these as impersonation.
+const BRAND_LEGIT_PARENTS = {
+  outlook: ['live.com', 'office.com', 'microsoft.com'],
+  gmail: ['google.com', 'googlemail.com'],
+  google: ['googleusercontent.com', 'googleapis.com', 'gstatic.com', 'youtube.com'],
+  microsoft: ['live.com', 'office.com', 'msn.com', 'bing.com'],
+  apple: ['icloud.com'],
+  amazon: ['awsstatic.com', 'amazonaws.com', 'a2z.com'],
+  facebook: ['fb.com', 'fbcdn.net', 'messenger.com', 'instagram.com'],
+  instagram: ['fb.com', 'fbcdn.net', 'facebook.com'],
+};
+
 // Tighter subset of SUSPICIOUS_KEYWORDS: action verbs only, used to gate brand_in_path.
 // Broader list includes nouns like 'banking'/'password' that appear in docs and aren't
 // strong enough signal on their own to flag a brand mention.
@@ -113,6 +128,9 @@ function analyzeURL(url) {
   if (!BRAND_OWNED_COMPOUNDS.has(tld1)) {
     for (const brand of BRANDS) {
       if (!hostnameLower.includes(brand)) continue;
+      // Skip if the registrable domain is a known legit parent for this brand
+      // (e.g. outlook.live.com — Microsoft hosts Outlook under live.com).
+      if ((BRAND_LEGIT_PARENTS[brand] || []).includes(tld1)) continue;
       let deceptive;
       if (isMultiPartHost) {
         // For multi-part TLDs: deceptive only if brand appears in subdomain labels
