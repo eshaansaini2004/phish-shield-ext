@@ -1,5 +1,7 @@
 // Layer 1: Static URL Analysis
 
+import { MULTI_PART_TLDS, getTLD1 } from './domainUtils.js';
+
 const BRANDS = [
   'google', 'paypal', 'amazon', 'facebook', 'apple', 'microsoft',
   'netflix', 'instagram', 'twitter', 'linkedin', 'chase',
@@ -67,23 +69,6 @@ function getHostnameParts(url) {
     const search = qIdx > -1 ? url.slice(qIdx) : '';
     return { hostname, pathname, search, full: null };
   }
-}
-
-// Known two-part TLD suffixes — getTLD1 must take three labels for these.
-const MULTI_PART_TLDS = new Set([
-  'co.uk', 'co.in', 'co.jp', 'co.au', 'co.nz', 'co.za',
-  'com.au', 'com.br', 'com.cn', 'com.mx', 'com.ar',
-  'org.uk', 'net.au', 'gov.uk', 'ac.uk', 'edu.au',
-]);
-
-function getTLD1(hostname) {
-  // returns registrable domain (TLD+1), handling two-part TLDs like co.uk
-  const parts = hostname.split('.');
-  if (parts.length >= 3 && MULTI_PART_TLDS.has(parts.slice(-2).join('.'))) {
-    return parts.slice(-3).join('.');
-  }
-  if (parts.length >= 2) return parts.slice(-2).join('.');
-  return hostname;
 }
 
 function analyzeURL(url) {
